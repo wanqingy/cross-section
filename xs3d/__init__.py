@@ -195,10 +195,11 @@ def slice_path(
   path:Sequence[Sequence[int]],
   anisotropy:Optional[Sequence[float]] = None,
   smoothing:int = 1,
+  threshold:float = 1e-3,
 ) -> np.ndarray:
   """
   Compute which voxels are intercepted by a section plane
-  and project them onto a plane.
+  that perpendicular to the path and project them onto a plane.
 
   NB: The orientation of this projection is not guaranteed. 
   The axes can be reflected and transposed compared to what
@@ -241,44 +242,39 @@ def slice_path(
   tangents = _moving_average(tangents, smoothing)
   tangents = _moving_average(tangents[::-1], smoothing)[::-1]
 
-  # basis1s = (tangents[1:] - tangents[:-1]).astype(np.float32)
-  # basis1s = np.concatenate([ basis1s, [basis1s[-1]] ])
-  basis1s = tangents
+  basis1s = np.cross(tangents[1:], tangents[:-1]) #.astype(np.float32)
+  basis1s = np.concatenate([ basis1s, [basis1s[-1]] ])
 
-  basis2s = []
+  if np.all(abs(basis1s[0]) < threshold):
+      for i in range(1, len(basis1s)):
+          # If the current element does not have all values less than 10^-8
+          if not np.all(abs(basis1s[i]) < threshold):
+              basis1s[0] = basis1s[i]
+              break
 
-  basis1 = basis1s[0]
-  # if np.all(basis1 == 0):
-  #   basis1 = np.cross(tangents[0], [1,0,0])
-  #   if np.all(basis1 == 0):
-  #     basis1 = np.cross(tangents[0], [0,1,0])
+  for i in range(1, len(basis1s)):
+    if np.all(abs(basis1s[0]) < threshold):
+      basis1s[i] = basis1s[i-1]
 
-  # basis1s[0] = basis1
+  basis2s = np.cross(basis1s, tangents)
 
-  # for i in range(1, len(basis1s)):
-  #   if np.all(basis1s[i] == 0):
-  #     basis1s[i] = basis1s[i-1]
+  # if np.all(basis2 == 0):
+  #   # basis2 = np.cross(tangents[0], [1,0,0])
+  #   basis2 = np.cross(basis1, [1,0,0])
+  #   if np.all(basis2 == 0):
+  #     # basis2 = np.cross(tangents[0], [0,1,0])
+  #     basis2 = np.cross(basis1, [0,1,0])
 
-  # basis2 = np.cross(tangents[0], basis1)
-  basis2 = np.cross(basis1, tangents[1])
+  # basis2s.append(basis2)
 
-  if np.all(basis2 == 0):
-    # basis2 = np.cross(tangents[0], [1,0,0])
-    basis2 = np.cross(basis1, [1,0,0])
-    if np.all(basis2 == 0):
-      # basis2 = np.cross(tangents[0], [0,1,0])
-      basis2 = np.cross(basis1, [0,1,0])
-
-  basis2s.append(basis2)
-
-  for tangent, delta in zip(tangents[2:], basis1s[1:-1]):
-    basis1 = delta
-    # basis2 = np.cross(tangent, basis1)
-    basis2 = np.cross(basis1, tangent)
-    if np.all(basis2 == 0):
-      basis2 = basis2s[-1]
-    basis2s.append(basis2)
-  basis2s.append(basis2s[-1])
+  # for tangent, delta in zip(tangents[2:], basis1s[1:-1]):
+  #   basis1 = delta
+  #   # basis2 = np.cross(tangent, basis1)
+  #   basis2 = np.cross(basis1, tangent)
+  #   if np.all(basis2 == 0):
+  #     basis2 = basis2s[-1]
+  #   basis2s.append(basis2)
+  # basis2s.append(basis2s[-1])
 
   for i in range(len(basis1s)):
     basis1s[i] /= np.linalg.norm(basis1s[i])
@@ -290,8 +286,7 @@ def slice_path(
     slices.append(
       fastxs3d.projection_with_frame(
         labels, pos, 
-        # basis1, basis2, 
-        basis2, basis1,
+        basis1, basis2, 
         anisotropy
       )
     )
@@ -317,7 +312,7 @@ def _moving_average(a:np.ndarray, n:int, mode:str = "symmetric") -> np.ndarray:
   ret /= float(n)
   return ret
 
-def slice_path_single(
+def slice_with_frame(
   labels:np.ndarray,
   pos:Sequence[int],
   basis1:Sequence[float],
